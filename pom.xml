@@ -51,13 +51,13 @@
     <jmh.version>1.12</jmh.version>
 
     <k3po.version>3.0.0-alpha-84</k3po.version>
-    <k3po.nukleus.ext.version>0.12</k3po.nukleus.ext.version>
+    <k3po.nukleus.ext.version>develop-SNAPSHOT</k3po.nukleus.ext.version>
 
     <nukleus.plugin.version>0.13</nukleus.plugin.version>
     <nukleus.version>0.12</nukleus.version>
 
-    <nukleus.http.cache.spec.version>0.21</nukleus.http.cache.spec.version>
-    <reaktor.version>0.31</reaktor.version>
+    <nukleus.http.cache.spec.version>develop-SNAPSHOT</nukleus.http.cache.spec.version>
+    <reaktor.version>develop-SNAPSHOT</reaktor.version>
   </properties>
 
   <dependencies>
