@@ -136,7 +136,7 @@ final class ProxyAcceptStream
             // Should already be canonicalized in http / http2 nuklei
             final String requestURL = getRequestURL(requestHeaders);
 
-            this.requestURLHash = requestURL.hashCode();
+            this.requestURLHash = 31 * authorizationScope + requestURL.hashCode();
 
             if (PreferHeader.preferResponseWhenModified(requestHeaders))
             {

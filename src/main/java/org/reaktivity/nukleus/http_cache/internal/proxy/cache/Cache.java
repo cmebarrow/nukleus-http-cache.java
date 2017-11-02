@@ -22,6 +22,7 @@ import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Int2ObjectHashMap;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.buffer.BufferPool;
+import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.AnswerableByCacheRequest;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.CacheableRequest;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.OnUpdateRequest;
@@ -112,8 +113,10 @@ public class Cache
                             subscriber.authScope(),
                             subscriber))
                     {
-                        throw new RuntimeException("Not implemented yet, probably better" +
-                                " to cancel push promise, but maybe should forward request?");
+                        final MessageConsumer acceptReply = subscriber.acceptReply();
+                        final long acceptReplyStreamId = subscriber.acceptReplyStreamId();
+                        final long acceptCorrelationId = subscriber.acceptCorrelationId();
+                        this.writer.do503AndAbort(acceptReply, acceptReplyStreamId, acceptCorrelationId);
                     }
                 }
             });
