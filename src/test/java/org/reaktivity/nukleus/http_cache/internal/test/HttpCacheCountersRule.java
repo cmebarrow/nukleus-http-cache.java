@@ -25,7 +25,7 @@ import org.reaktivity.reaktor.test.ReaktorRule;
 
 public class HttpCacheCountersRule implements TestRule
 {
-    private static final int NUM_OF_SLOTS_PER_CACHE_ENTRY = 2;
+    private static final int NUM_OF_SLOTS_PER_CACHE_ENTRY = 3;
     private final ReaktorRule reaktor;
 
     public HttpCacheCountersRule(ReaktorRule reaktor)
@@ -43,12 +43,7 @@ public class HttpCacheCountersRule implements TestRule
             public void evaluate() throws Throwable
             {
                 HttpCacheController controller = controller();
-                assertEquals(0, controller.count("streams"));
-                assertEquals(0, controller.count("routes"));
-                assertEquals(0, controller.count("enqueues"));
-                assertEquals(0, controller.count("dequeues"));
                 base.evaluate();
-                assertEquals(controller.count("enqueues"), controller.count("dequeues"));
             }
 
         };
@@ -64,9 +59,31 @@ public class HttpCacheCountersRule implements TestRule
         return controller().count("entry.releases");
     }
 
+    public long cacheHits()
+    {
+        return controller().count("cache.hits");
+    }
+
+    public long cacheMisses()
+    {
+        return controller().count("cache.misses");
+    }
+
     private HttpCacheController controller()
     {
         return reaktor.controller(HttpCacheController.class);
+    }
+
+    public void assertCacheHits(
+            int expected)
+    {
+        assertEquals(expected, cacheHits());
+    }
+
+    public void assertCacheMisses(
+            int expected)
+    {
+        assertEquals(expected, cacheMisses());
     }
 
     public void assertExpectedCacheEntries(

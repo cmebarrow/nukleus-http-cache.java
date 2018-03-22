@@ -27,6 +27,7 @@ import java.util.function.Consumer;
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
 import org.agrona.concurrent.UnsafeBuffer;
+import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.CacheControl;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.CacheDirectives;
@@ -36,6 +37,7 @@ import org.reaktivity.nukleus.http_cache.internal.types.Flyweight;
 import org.reaktivity.nukleus.http_cache.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
 import org.reaktivity.nukleus.http_cache.internal.types.ListFW.Builder;
+import org.reaktivity.nukleus.http_cache.internal.types.OctetsFW;
 import org.reaktivity.nukleus.http_cache.internal.types.String16FW;
 import org.reaktivity.nukleus.http_cache.internal.types.StringFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.AbortFW;
@@ -59,11 +61,17 @@ public class Writer
     private final ResetFW.Builder resetRW = new ResetFW.Builder();
     private final AbortFW.Builder abortRW = new AbortFW.Builder();
 
-    private final MutableDirectBuffer writeBuffer;
+    final ListFW<HttpHeaderFW> requestHeadersRO = new HttpBeginExFW().headers();
 
-    public Writer(MutableDirectBuffer writeBuffer)
+    private final MutableDirectBuffer writeBuffer;
+    private final BufferPool bufferPool;
+
+    public Writer(
+            MutableDirectBuffer writeBuffer,
+            BufferPool bufferPool)
     {
         this.writeBuffer = writeBuffer;
+        this.bufferPool = bufferPool;
     }
 
     public void doHttpBegin(
@@ -130,7 +138,7 @@ public class Writer
                         StringBuilder cacheControlDirectives = new StringBuilder();
                         cacheControlFW.getValues().entrySet().stream().forEach(e ->
                         {
-                            String directive = e.getKey(); e.getValue();
+                            String directive = e.getKey();
                             String optionalValue = e.getValue();
                             if (cacheControlDirectives.length() > 0)
                             {
@@ -152,10 +160,12 @@ public class Writer
                                 }
                             }
                         });
+                        builder.item(header -> header.name(nameFW).value(cacheControlDirectives.toString()));
                     }
                     else
                     {
-                        builder.item(header -> header.name(nameFW).value(valueFW));
+                        builder.item(header ->
+                            header.name(nameFW).value(valueFW.asString() + ", stale-while-revalidate=" + staleWhileRevalidate));
                     }
                     break;
                 default: builder.item(header -> header.name(nameFW).value(valueFW));
@@ -174,6 +184,8 @@ public class Writer
     public void doHttpData(
         MessageConsumer target,
         long targetStreamId,
+        long groupId,
+        int padding,
         DirectBuffer payload,
         int offset,
         int length)
@@ -181,8 +193,27 @@ public class Writer
 
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                             .streamId(targetStreamId)
+                            .groupId(groupId)
+                            .padding(padding)
                             .payload(p -> p.set(payload, offset, length))
                             .build();
+
+        target.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
+    }
+
+    public void doHttpData(
+        MessageConsumer target,
+        long targetStreamId,
+        long groupId,
+        int padding,
+        Consumer<OctetsFW.Builder> mutator)
+    {
+        DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
+            .streamId(targetStreamId)
+            .groupId(groupId)
+            .padding(padding)
+            .payload(mutator)
+            .build();
 
         target.accept(data.typeId(), data.buffer(), data.offset(), data.sizeof());
     }
@@ -213,12 +244,14 @@ public class Writer
         final MessageConsumer throttle,
         final long throttleStreamId,
         final int credit,
-        final int padding)
+        final int padding,
+        final long groupId)
     {
         final WindowFW window = windowRW.wrap(writeBuffer, 0, writeBuffer.capacity())
                 .streamId(throttleStreamId)
                 .credit(credit)
                 .padding(padding)
+                .groupId(groupId)
                 .build();
 
         throttle.accept(window.typeId(), window.buffer(), window.offset(), window.sizeof());
@@ -247,17 +280,17 @@ public class Writer
 
     public void doHttpPushPromise(
         AnswerableByCacheRequest request,
-        ListFW<HttpHeaderFW> requestHeaders,
         ListFW<HttpHeaderFW> responseHeaders,
         int freshnessExtension,
         String etag)
     {
+        final ListFW<HttpHeaderFW> requestHeaders = request.getRequestHeaders(requestHeadersRO, bufferPool);
         final MessageConsumer acceptReply = request.acceptReply();
         final long acceptReplyStreamId = request.acceptReplyStreamId();
 
         doH2PushPromise(
             acceptReply,
-            acceptReplyStreamId,
+            acceptReplyStreamId, 0L, 0,
             setPushPromiseHeaders(requestHeaders, responseHeaders, freshnessExtension, etag));
     }
 
@@ -352,11 +385,15 @@ public class Writer
     private void doH2PushPromise(
         MessageConsumer target,
         long targetId,
+        long groupId,
+        int padding,
         Consumer<ListFW.Builder<HttpHeaderFW.Builder, HttpHeaderFW>> mutator)
     {
         DataFW data = dataRW.wrap(writeBuffer, 0, writeBuffer.capacity())
             .streamId(targetId)
-            .payload(e -> {})
+            .groupId(groupId)
+            .padding(padding)
+            .payload((OctetsFW) null)
             .extension(e -> e.set(visitHttpBeginEx(mutator)))
             .build();
 
@@ -374,4 +411,5 @@ public class Writer
                 .value("503")));
         this.doAbort(acceptReply, acceptReplyStreamId);
     }
+
 }

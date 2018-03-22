@@ -19,6 +19,7 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.Assert.assertEquals;
 import static org.junit.rules.RuleChain.outerRule;
 
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
@@ -51,7 +52,7 @@ public class ProxyExceptionsIT
     private final HttpCacheCountersRule counters = new HttpCacheCountersRule(reaktor);
 
     @Rule
-    public final TestRule chain = outerRule(reaktor).around(counters).around(k3po).around(timeout);
+    public final TestRule chain = outerRule(k3po).around(reaktor).around(counters).around(timeout);
 
     @Test
     @Specification({
@@ -115,11 +116,12 @@ public class ProxyExceptionsIT
     }
 
     @Test
+    @Ignore("https://github.com/reaktivity/nukleus-http-cache.java/issues/72")
     @Specification({
         "${route}/proxy/controller",
         "${streams}/client.sent.abort.on.scheduled.poll/accept/client"
     })
-    public void shouldClientSentAbortOnScheduledPoll() throws Exception
+    public void shouldAcceptAbortOnScheduledPoll() throws Exception
     {
         k3po.finish();
 //        counters.assertExpectedCacheEntries(0); // TODO, fix. Sporadically failing today,

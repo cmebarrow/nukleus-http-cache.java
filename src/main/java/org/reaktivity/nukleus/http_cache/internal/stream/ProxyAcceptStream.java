@@ -62,7 +62,6 @@ final class ProxyAcceptStream
     private MessageConsumer streamState;
 
     private int requestSlot = NO_SLOT;
-    private int requestSize;
     private Request request;
     private int requestURLHash;
 
@@ -151,6 +150,7 @@ final class ProxyAcceptStream
             }
             else
             {
+                this.streamFactory.cacheMisses.getAsLong();
                 proxyRequest(requestHeaders);
             }
         }
@@ -173,10 +173,7 @@ final class ProxyAcceptStream
             acceptReply,
             acceptReplyStreamId,
             acceptCorrelationId,
-            streamFactory.correlationResponseBufferPool,
-            streamFactory.correlationRequestBufferPool,
             requestSlot,
-            requestSize,
             streamFactory.router,
             requestURLHash,
             authScope,
@@ -184,10 +181,11 @@ final class ProxyAcceptStream
 
         this.request = onUpdateRequest;
 
-        if (!streamFactory.cache.handleOnUpdateRequest(requestURLHash, onUpdateRequest, requestHeaders, authScope))
-        {
-            streamFactory.writer.do503AndAbort(acceptReply, authScope, authScope);
-        }
+        streamFactory.cache.handleOnUpdateRequest(
+                requestURLHash,
+                onUpdateRequest,
+                requestHeaders,
+                authScope);
         this.streamState = this::handleAllFramesByIgnoring;
     }
 
@@ -207,10 +205,7 @@ final class ProxyAcceptStream
                 streamFactory.supplyCorrelationId,
                 streamFactory.supplyStreamId,
                 requestURLHash,
-                streamFactory.correlationResponseBufferPool,
-                streamFactory.correlationRequestBufferPool,
                 requestSlot,
-                requestSize,
                 streamFactory.router,
                 authScope,
                 streamFactory.supplyEtag.get());
@@ -224,13 +219,15 @@ final class ProxyAcceptStream
             }
             else
             {
+                this.streamFactory.cacheMisses.getAsLong();
                 sendBeginToConnect(requestHeaders);
                 streamFactory.writer.doHttpEnd(connect, connectStreamId);
             }
         }
         else
         {
-            this.request.purge();
+            this.streamFactory.cacheHits.getAsLong();
+            this.request.purge(streamFactory.requestBufferPool);
         }
         this.streamState = this::handleAllFramesByIgnoring;
     }
@@ -263,29 +260,16 @@ final class ProxyAcceptStream
         streamFactory.router.setThrottle(connectName, connectStreamId, this::handleConnectThrottle);
     }
 
-    private int storeRequest(final ListFW<HttpHeaderFW> headers)
+    private void storeRequest(final ListFW<HttpHeaderFW> headers)
     {
         this.requestSlot = streamFactory.streamBufferPool.acquire(acceptStreamId);
-        if (requestSlot == NO_SLOT)
+        while (requestSlot == NO_SLOT)
         {
-            send503AndReset();
-            throw new RuntimeException("Cache out of space, please reconfigure");  // TODO reconsider hard fail??
+            this.streamFactory.cache.purgeOld();
+            this.requestSlot = streamFactory.streamBufferPool.acquire(acceptStreamId);
         }
-        this.requestSize = 0;
         MutableDirectBuffer requestCacheBuffer = streamFactory.streamBufferPool.buffer(requestSlot);
-        headers.forEach(h ->
-        {
-            requestCacheBuffer.putBytes(this.requestSize, h.buffer(), h.offset(), h.sizeof());
-            this.requestSize += h.sizeof();
-        });
-        return this.requestSize;
-    }
-
-    private void send503AndReset()
-    {
-        streamFactory.writer.doReset(acceptThrottle, acceptStreamId);
-        streamFactory.writer.do503AndAbort(acceptReply, acceptReplyStreamId, acceptCorrelationId);
-        request.purge();
+        requestCacheBuffer.putBytes(0, headers.buffer(), headers.offset(), headers.sizeof());
     }
 
     private void send504()
@@ -295,7 +279,7 @@ final class ProxyAcceptStream
                         .name(STATUS)
                         .value("504")));
         streamFactory.writer.doAbort(acceptReply, acceptReplyStreamId);
-        request.purge();
+        request.purge(streamFactory.requestBufferPool);
     }
 
     private void handleAllFramesByIgnoring(
@@ -321,14 +305,15 @@ final class ProxyAcceptStream
         case DataFW.TYPE_ID:
             final DataFW data = streamFactory.dataRO.wrap(buffer, index, index + length);
             final OctetsFW payload = data.payload();
-            streamFactory.writer.doHttpData(connect, connectStreamId, payload.buffer(), payload.offset(), payload.sizeof());
+            streamFactory.writer.doHttpData(connect, connectStreamId, data.groupId(), data.padding(),
+                    payload.buffer(), payload.offset(), payload.sizeof());
             break;
         case EndFW.TYPE_ID:
             streamFactory.writer.doHttpEnd(connect, connectStreamId);
             break;
         case AbortFW.TYPE_ID:
             streamFactory.writer.doAbort(connect, connectStreamId);
-            request.purge();
+            request.purge(streamFactory.requestBufferPool);
             break;
         default:
             streamFactory.writer.doReset(acceptThrottle, acceptStreamId);
@@ -348,7 +333,8 @@ final class ProxyAcceptStream
                 final WindowFW window = streamFactory.windowRO.wrap(buffer, index, index + length);
                 final int credit = window.credit();
                 final int padding = window.padding();
-                streamFactory.writer.doWindow(acceptThrottle, acceptStreamId, credit, padding);
+                final long groupId = window.groupId();
+                streamFactory.writer.doWindow(acceptThrottle, acceptStreamId, credit, padding, groupId);
                 break;
             case ResetFW.TYPE_ID:
                 streamFactory.writer.doReset(acceptThrottle, acceptStreamId);
