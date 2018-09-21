@@ -18,17 +18,17 @@ package org.reaktivity.nukleus.http_cache.internal.proxy.request;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.route.RouteManager;
 
-public class OnUpdateRequest extends AnswerableByCacheRequest
+public class PreferWaitIfNoneMatchRequest extends AnswerableByCacheRequest
 {
-
-    public OnUpdateRequest(
+    public PreferWaitIfNoneMatchRequest(
         String acceptName,
         MessageConsumer acceptReply,
         long acceptReplyStreamId,
         long acceptCorrelationId,
-        int requestSlot,
         RouteManager router,
         int requestURLHash,
+        boolean authorizationHeader,
+        long authorization,
         short authScope,
         String etag)
     {
@@ -38,8 +38,9 @@ public class OnUpdateRequest extends AnswerableByCacheRequest
             acceptReplyStreamId,
             acceptCorrelationId,
             router,
-            requestSlot,
             requestURLHash,
+            authorizationHeader,
+            authorization,
             authScope,
             etag);
     }
@@ -47,7 +48,12 @@ public class OnUpdateRequest extends AnswerableByCacheRequest
     @Override
     public Type getType()
     {
-        return Type.ON_UPDATE;
+        return Type.PREFER_WAIT;
     }
 
+    @Override
+    public void purge()
+    {
+        // no-op
+    }
 }

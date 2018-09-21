@@ -27,7 +27,6 @@ import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
-import org.reaktivity.nukleus.http_cache.internal.HttpCacheController;
 import org.reaktivity.nukleus.http_cache.internal.test.HttpCacheCountersRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
 
@@ -41,18 +40,18 @@ public class ProxyExceptionsIT
 
     private final ReaktorRule reaktor = new ReaktorRule()
             .nukleus("http-cache"::equals)
-            .controller(HttpCacheController.class::isAssignableFrom)
+            .controller("http-cache"::equals)
             .directory("target/nukleus-itests")
             .commandBufferCapacity(1024)
             .responseBufferCapacity(1024)
-            .counterValuesBufferCapacity(1024)
+            .counterValuesBufferCapacity(4096)
             .nukleus("http-cache"::equals)
             .clean();
 
     private final HttpCacheCountersRule counters = new HttpCacheCountersRule(reaktor);
 
     @Rule
-    public final TestRule chain = outerRule(k3po).around(reaktor).around(counters).around(timeout);
+    public final TestRule chain = outerRule(reaktor).around(k3po).around(counters).around(timeout);
 
     @Test
     @Specification({
@@ -75,7 +74,7 @@ public class ProxyExceptionsIT
     public void shouldHandleAbortSentOnCacheableRequest() throws Exception
     {
         k3po.finish();
-        assertEquals(1, counters.slabAquires() - counters.slabReleases());
+        assertEquals(1, counters.requestsCachable());
         // We proceed with request out back anyways, TODO, consider adding to test response returning and getting cached
     }
 
@@ -113,6 +112,19 @@ public class ProxyExceptionsIT
     {
         k3po.finish();
         counters.assertExpectedCacheEntries(0);
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/accept.reply.sent.reset.cacheble.response/accept/client",
+        "${streams}/accept.reply.sent.reset.cacheble.response/connect/server",
+    })
+    public void shouldAcceptReplySentResetCachebleResponse() throws Exception
+    {
+        k3po.finish();
+        Thread.sleep(100);
+        counters.assertExpectedCacheEntries(1);
     }
 
     @Test

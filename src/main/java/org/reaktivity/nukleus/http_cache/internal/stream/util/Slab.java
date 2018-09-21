@@ -19,7 +19,6 @@ import static org.agrona.BitUtil.isPowerOfTwo;
 
 import java.nio.ByteBuffer;
 import java.util.BitSet;
-import java.util.function.LongSupplier;
 
 import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Hashing;
@@ -45,10 +44,7 @@ public class Slab implements BufferPool
     private final BitSet used;
     private final int[] availableSlots;
 
-    private LongSupplier acquires;
-    private LongSupplier releases;
-
-    public Slab(int totalCapacity, int slotCapacity, LongSupplier acquires, LongSupplier releases)
+    public Slab(int totalCapacity, int slotCapacity)
     {
         if (!isZeroOrPowerOfTwo(totalCapacity))
         {
@@ -70,8 +66,6 @@ public class Slab implements BufferPool
         this.slotByteBuffer = slabBuffer.byteBuffer().duplicate();
         this.used = new BitSet(totalSlots);
         this.availableSlots = new int[] { totalSlots };
-        this.acquires = acquires;
-        this.releases = releases;
     }
 
     public int acquiredSlots()
@@ -100,7 +94,6 @@ public class Slab implements BufferPool
         used.set(slot);
         availableSlots[0]--;
 
-        this.acquires.getAsLong();
         return slot;
     }
 
@@ -142,7 +135,6 @@ public class Slab implements BufferPool
     {
         assert used.get(slot);
         used.clear(slot);
-        this.releases.getAsLong();
         availableSlots[0]++;
     }
 
@@ -162,8 +154,6 @@ public class Slab implements BufferPool
         this.slotCapacity = that.slotCapacity;
         this.used = that.used;
         this.slotByteBuffer = that.slotByteBuffer.duplicate();
-        this.acquires = that.acquires;
-        this.releases = that.releases;
     }
 
     private static boolean isZeroOrPowerOfTwo(int value)

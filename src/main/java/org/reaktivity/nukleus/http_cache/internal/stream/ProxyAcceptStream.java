@@ -17,17 +17,18 @@ package org.reaktivity.nukleus.http_cache.internal.stream;
 
 import static org.reaktivity.nukleus.buffer.BufferPool.NO_SLOT;
 import static org.reaktivity.nukleus.http_cache.internal.proxy.cache.CacheUtils.canBeServedByCache;
+import static org.reaktivity.nukleus.http_cache.internal.proxy.cache.PreferHeader.isPreferIfNoneMatch;
 import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeaders.STATUS;
+import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeadersUtil.HAS_AUTHORIZATION;
 import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeadersUtil.getRequestURL;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
+import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.CacheDirectives;
-import org.reaktivity.nukleus.http_cache.internal.proxy.cache.PreferHeader;
-import org.reaktivity.nukleus.http_cache.internal.proxy.request.CacheableRequest;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.InitialRequest;
-import org.reaktivity.nukleus.http_cache.internal.proxy.request.OnUpdateRequest;
+import org.reaktivity.nukleus.http_cache.internal.proxy.request.PreferWaitIfNoneMatchRequest;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.ProxyRequest;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.Request;
 import org.reaktivity.nukleus.http_cache.internal.types.HttpHeaderFW;
@@ -56,7 +57,6 @@ final class ProxyAcceptStream
     private MessageConsumer connect;
     private String connectName;
     private long connectRef;
-    private long connectCorrelationId;
     private long connectStreamId;
 
     private MessageConsumer streamState;
@@ -66,9 +66,9 @@ final class ProxyAcceptStream
     private int requestURLHash;
 
     ProxyAcceptStream(
-            ProxyStreamFactory streamFactory,
-            MessageConsumer acceptThrottle,
-            long acceptStreamId)
+        ProxyStreamFactory streamFactory,
+        MessageConsumer acceptThrottle,
+        long acceptStreamId)
     {
         this.streamFactory = streamFactory;
         this.acceptThrottle = acceptThrottle;
@@ -77,19 +77,19 @@ final class ProxyAcceptStream
     }
 
     void handleStream(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         streamState.accept(msgTypeId, buffer, index, length);
     }
 
     private void beforeBegin(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         if (msgTypeId == BeginFW.TYPE_ID)
         {
@@ -103,7 +103,8 @@ final class ProxyAcceptStream
         }
     }
 
-    private void handleBegin(BeginFW begin)
+    private void handleBegin(
+        BeginFW begin)
     {
         long acceptRef = streamFactory.beginRO.sourceRef();
         final long authorization = begin.authorization();
@@ -121,7 +122,6 @@ final class ProxyAcceptStream
             this.connectName = connectRoute.target().asString();
             this.connect = streamFactory.router.supplyTarget(connectName);
             this.connectRef = connectRoute.targetRef();
-            this.connectCorrelationId = streamFactory.supplyCorrelationId.getAsLong();
             this.connectStreamId = streamFactory.supplyStreamId.getAsLong();
 
             this.acceptReply = streamFactory.router.supplyTarget(acceptName);
@@ -131,59 +131,68 @@ final class ProxyAcceptStream
             final OctetsFW extension = streamFactory.beginRO.extension();
             final HttpBeginExFW httpBeginFW = extension.get(streamFactory.httpBeginExRO::wrap);
             final ListFW<HttpHeaderFW> requestHeaders = httpBeginFW.headers();
+            final boolean authorizationHeader = requestHeaders.anyMatch(HAS_AUTHORIZATION);
 
             // Should already be canonicalized in http / http2 nuklei
             final String requestURL = getRequestURL(requestHeaders);
 
             this.requestURLHash = 31 * authorizationScope + requestURL.hashCode();
 
-            if (PreferHeader.preferResponseWhenModified(requestHeaders))
+            // count all requests
+            streamFactory.counters.requests.getAsLong();
+
+            if (isPreferIfNoneMatch(requestHeaders))
             {
-                handleRequestForWhenUpdated(
+                streamFactory.counters.requestsPreferWait.getAsLong();
+                handlePreferWaitIfNoneMatchRequest(
+                        authorizationHeader,
+                        authorization,
                         authorizationScope,
                         requestHeaders);
             }
             else if (canBeServedByCache(requestHeaders))
             {
-                storeRequest(requestHeaders);
-                handleCacheableRequest(requestHeaders, requestURL, authorizationScope);
+                streamFactory.counters.requestsCacheable.getAsLong();
+                handleCacheableRequest(requestHeaders, requestURL, authorizationHeader, authorization, authorizationScope);
             }
             else
             {
-                this.streamFactory.cacheMisses.getAsLong();
                 proxyRequest(requestHeaders);
             }
         }
     }
 
-    private short authorizationScope(long authorization)
+    private short authorizationScope(
+        long authorization)
     {
         return (short) (authorization >>> 48);
     }
 
-    private void handleRequestForWhenUpdated(
+    private void handlePreferWaitIfNoneMatchRequest(
+        boolean authorizationHeader,
+        long authorization,
         short authScope,
         ListFW<HttpHeaderFW> requestHeaders)
     {
-        storeRequest(requestHeaders);
         final String etag = streamFactory.supplyEtag.get();
 
-        final OnUpdateRequest onUpdateRequest = new OnUpdateRequest(
+        final PreferWaitIfNoneMatchRequest preferWaitRequest = new PreferWaitIfNoneMatchRequest(
             acceptName,
             acceptReply,
             acceptReplyStreamId,
             acceptCorrelationId,
-            requestSlot,
             streamFactory.router,
             requestURLHash,
+            authorizationHeader,
+            authorization,
             authScope,
             etag);
 
-        this.request = onUpdateRequest;
+        this.request = preferWaitRequest;
 
-        streamFactory.cache.handleOnUpdateRequest(
+        streamFactory.cache.handlePreferWaitIfNoneMatchRequest(
                 requestURLHash,
-                onUpdateRequest,
+                preferWaitRequest,
                 requestHeaders,
                 authScope);
         this.streamState = this::handleAllFramesByIgnoring;
@@ -192,10 +201,19 @@ final class ProxyAcceptStream
     private void handleCacheableRequest(
         final ListFW<HttpHeaderFW> requestHeaders,
         final String requestURL,
+        boolean authorizationHeader,
+        long authorization,
         short authScope)
     {
-        CacheableRequest cacheableRequest;
+        boolean stored = storeRequest(requestHeaders, streamFactory.requestBufferPool);
+        if (!stored)
+        {
+            send503RetryAfter();
+            return;
+        }
+        InitialRequest cacheableRequest;
         this.request = cacheableRequest = new InitialRequest(
+                streamFactory.cache,
                 acceptName,
                 acceptReply,
                 acceptReplyStreamId,
@@ -205,35 +223,39 @@ final class ProxyAcceptStream
                 streamFactory.supplyCorrelationId,
                 streamFactory.supplyStreamId,
                 requestURLHash,
+                streamFactory.requestBufferPool,
                 requestSlot,
                 streamFactory.router,
+                authorizationHeader,
+                authorization,
                 authScope,
                 streamFactory.supplyEtag.get());
 
-        if (!streamFactory.cache.handleInitialRequest(requestURLHash, requestHeaders, authScope, cacheableRequest))
+        if (streamFactory.cache.handleInitialRequest(requestURLHash, requestHeaders, authScope, cacheableRequest))
         {
-            if(requestHeaders.anyMatch(CacheDirectives.IS_ONLY_IF_CACHED))
-            {
-                // TODO move this logic and edge case inside of cache
-                send504();
-            }
-            else
-            {
-                this.streamFactory.cacheMisses.getAsLong();
-                sendBeginToConnect(requestHeaders);
-                streamFactory.writer.doHttpEnd(connect, connectStreamId);
-            }
+            this.request.purge();
+        }
+        else if (streamFactory.cache.hasPendingInitialRequests(requestURLHash))
+        {
+            streamFactory.cache.addPendingRequest(cacheableRequest);
+        }
+        else if (requestHeaders.anyMatch(CacheDirectives.IS_ONLY_IF_CACHED))
+        {
+            // TODO move this logic and edge case inside of cache
+            send504();
         }
         else
         {
-            this.streamFactory.cacheHits.getAsLong();
-            this.request.purge(streamFactory.requestBufferPool);
+            sendBeginToConnect(requestHeaders);
+            streamFactory.writer.doHttpEnd(connect, connectStreamId);
+            streamFactory.cache.createPendingInitialRequests(cacheableRequest);
         }
+
         this.streamState = this::handleAllFramesByIgnoring;
     }
 
     private void proxyRequest(
-            final ListFW<HttpHeaderFW> requestHeaders)
+        final ListFW<HttpHeaderFW> requestHeaders)
     {
         this.request = new ProxyRequest(
                 acceptName,
@@ -247,11 +269,13 @@ final class ProxyAcceptStream
         this.streamState = this::handleFramesWhenProxying;
     }
 
-    private void sendBeginToConnect(final ListFW<HttpHeaderFW> requestHeaders)
+    private void sendBeginToConnect(
+        final ListFW<HttpHeaderFW> requestHeaders)
     {
+        long connectCorrelationId = streamFactory.supplyCorrelationId.getAsLong();
         streamFactory.correlations.put(connectCorrelationId, request);
 
-        streamFactory.writer.doHttpBegin(connect, connectStreamId, connectRef, connectCorrelationId,
+        streamFactory.writer.doHttpRequest(connect, connectStreamId, connectRef, connectCorrelationId,
                 builder -> requestHeaders.forEach(
                         h ->  builder.item(item -> item.name(h.name()).value(h.value()))
             )
@@ -260,33 +284,52 @@ final class ProxyAcceptStream
         streamFactory.router.setThrottle(connectName, connectStreamId, this::handleConnectThrottle);
     }
 
-    private void storeRequest(final ListFW<HttpHeaderFW> headers)
+    private boolean storeRequest(
+        final ListFW<HttpHeaderFW> headers,
+        final BufferPool bufferPool)
     {
-        this.requestSlot = streamFactory.streamBufferPool.acquire(acceptStreamId);
-        while (requestSlot == NO_SLOT)
+        this.requestSlot = bufferPool.acquire(acceptStreamId);
+        if (requestSlot == NO_SLOT)
         {
-            this.streamFactory.cache.purgeOld();
-            this.requestSlot = streamFactory.streamBufferPool.acquire(acceptStreamId);
+            return false;
         }
-        MutableDirectBuffer requestCacheBuffer = streamFactory.streamBufferPool.buffer(requestSlot);
+        MutableDirectBuffer requestCacheBuffer = bufferPool.buffer(requestSlot);
         requestCacheBuffer.putBytes(0, headers.buffer(), headers.offset(), headers.sizeof());
+        return true;
     }
 
     private void send504()
     {
-        streamFactory.writer.doHttpBegin(acceptReply, acceptReplyStreamId, 0L, acceptCorrelationId, e ->
+        streamFactory.writer.doHttpResponse(acceptReply, acceptReplyStreamId, 0L, acceptCorrelationId, e ->
                 e.item(h -> h.representation((byte) 0)
                         .name(STATUS)
                         .value("504")));
         streamFactory.writer.doAbort(acceptReply, acceptReplyStreamId);
-        request.purge(streamFactory.requestBufferPool);
+        request.purge();
+
+        // count all responses
+        streamFactory.counters.responses.getAsLong();
+    }
+
+    private void send503RetryAfter()
+    {
+        streamFactory.writer.doHttpResponse(acceptReply, acceptReplyStreamId, 0L, acceptCorrelationId, e ->
+                e.item(h -> h.name(STATUS).value("503"))
+                 .item(h -> h.name("retry-after").value("0")));
+        streamFactory.writer.doHttpEnd(acceptReply, acceptReplyStreamId);
+
+        // count all responses
+        streamFactory.counters.responses.getAsLong();
+
+        // count retry responses
+        streamFactory.counters.responsesRetry.getAsLong();
     }
 
     private void handleAllFramesByIgnoring(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         switch (msgTypeId)
         {
@@ -295,10 +338,10 @@ final class ProxyAcceptStream
     }
 
     private void handleFramesWhenProxying(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         switch (msgTypeId)
         {
@@ -313,7 +356,7 @@ final class ProxyAcceptStream
             break;
         case AbortFW.TYPE_ID:
             streamFactory.writer.doAbort(connect, connectStreamId);
-            request.purge(streamFactory.requestBufferPool);
+            request.purge();
             break;
         default:
             streamFactory.writer.doReset(acceptThrottle, acceptStreamId);
@@ -322,10 +365,10 @@ final class ProxyAcceptStream
     }
 
     private void handleConnectThrottle(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         switch (msgTypeId)
         {
@@ -340,7 +383,6 @@ final class ProxyAcceptStream
                 streamFactory.writer.doReset(acceptThrottle, acceptStreamId);
                 break;
             default:
-                // TODO, ABORT and RESET
                 break;
         }
     }

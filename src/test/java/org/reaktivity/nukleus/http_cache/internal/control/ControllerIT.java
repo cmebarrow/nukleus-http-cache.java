@@ -25,6 +25,7 @@ import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
 import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
+import org.kaazing.k3po.junit.annotation.ScriptProperty;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
 import org.reaktivity.nukleus.http_cache.internal.HttpCacheController;
@@ -34,7 +35,8 @@ public class ControllerIT
 {
     private final K3poRule k3po = new K3poRule()
         .addScriptRoot("route", "org/reaktivity/specification/nukleus/http_cache/control/route")
-        .addScriptRoot("unroute", "org/reaktivity/specification/nukleus/http_cache/control/unroute");
+        .addScriptRoot("unroute", "org/reaktivity/specification/nukleus/http_cache/control/unroute")
+        .addScriptRoot("freeze", "org/reaktivity/specification/nukleus/control/freeze");
 
     private final TestRule timeout = new DisableOnDebug(new Timeout(5, SECONDS));
 
@@ -43,7 +45,7 @@ public class ControllerIT
         .commandBufferCapacity(1024)
         .responseBufferCapacity(1024)
         .counterValuesBufferCapacity(1024)
-        .controller(HttpCacheController.class::equals);
+        .controller("http-cache"::equals);
 
     @Rule
     public final TestRule chain = outerRule(k3po).around(timeout).around(reaktor);
@@ -76,8 +78,8 @@ public class ControllerIT
         k3po.start();
 
         reaktor.controller(HttpCacheController.class)
-           .routeProxy("source", 0L, "target", targetRef)
-        .get();
+               .routeProxy("source", 0L, "target", targetRef)
+               .get();
 
         k3po.finish();
     }
@@ -125,7 +127,23 @@ public class ControllerIT
 
         reaktor.controller(HttpCacheController.class)
                .unrouteProxy("source", sourceRef, "target", targetRef)
-                  .get();
+               .get();
+
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${freeze}/nukleus"
+    })
+    @ScriptProperty("nameF00N \"http-cache\"")
+    public void shouldFreeze() throws Exception
+    {
+        k3po.start();
+
+        reaktor.controller(HttpCacheController.class)
+               .freeze()
+               .get();
 
         k3po.finish();
     }

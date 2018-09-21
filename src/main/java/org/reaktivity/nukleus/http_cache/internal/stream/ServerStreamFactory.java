@@ -21,7 +21,6 @@ import java.util.function.LongSupplier;
 
 import org.agrona.DirectBuffer;
 import org.agrona.MutableDirectBuffer;
-import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessagePredicate;
 import org.reaktivity.nukleus.http_cache.internal.stream.util.Writer;
@@ -52,14 +51,11 @@ public class ServerStreamFactory implements StreamFactory
     public ServerStreamFactory(
         RouteManager router,
         MutableDirectBuffer writeBuffer,
-        LongSupplier supplyStreamId,
-        BufferPool bufferPool)
+        LongSupplier supplyStreamId)
     {
         this.router = requireNonNull(router);
         this.supplyStreamId = requireNonNull(supplyStreamId);
-        this.writer = new Writer(
-                writeBuffer,
-                bufferPool);
+        this.writer = new Writer(writeBuffer);
     }
 
     @Override
@@ -97,13 +93,13 @@ public class ServerStreamFactory implements StreamFactory
         {
             final long networkId = begin.streamId();
 
-            newStream = new ProxyAcceptStream(networkThrottle, networkId)::handleStream;
+            newStream = new ServerAcceptStream(networkThrottle, networkId)::handleStream;
         }
 
         return newStream;
     }
 
-    private final class ProxyAcceptStream
+    private final class ServerAcceptStream
     {
         private final MessageConsumer acceptThrottle;
         private final long acceptStreamId;
@@ -112,9 +108,9 @@ public class ServerStreamFactory implements StreamFactory
         private MessageConsumer acceptReply;
         private long acceptReplyStreamId;
 
-        private ProxyAcceptStream(
-                MessageConsumer acceptThrottle,
-                long acceptStreamId)
+        private ServerAcceptStream(
+            MessageConsumer acceptThrottle,
+            long acceptStreamId)
         {
             this.acceptThrottle = acceptThrottle;
             this.acceptStreamId = acceptStreamId;
@@ -122,19 +118,19 @@ public class ServerStreamFactory implements StreamFactory
         }
 
         private void handleStream(
-                int msgTypeId,
-                DirectBuffer buffer,
-                int index,
-                int length)
+            int msgTypeId,
+            DirectBuffer buffer,
+            int index,
+            int length)
         {
             streamState.accept(msgTypeId, buffer, index, length);
         }
 
         private void beforeBegin(
-                int msgTypeId,
-                DirectBuffer buffer,
-                int index,
-                int length)
+            int msgTypeId,
+            DirectBuffer buffer,
+            int index,
+            int length)
         {
             if (msgTypeId == BeginFW.TYPE_ID)
             {
@@ -148,7 +144,7 @@ public class ServerStreamFactory implements StreamFactory
         }
 
         private void handleBegin(
-                BeginFW begin)
+            BeginFW begin)
         {
             final long acceptRef = beginRO.sourceRef();
             final String acceptName = begin.source().asString();
@@ -164,7 +160,7 @@ public class ServerStreamFactory implements StreamFactory
                 this.acceptReplyStreamId =  supplyStreamId.getAsLong();
                 final long acceptCorrelationId = begin.correlationId();
 
-                writer.doHttpBegin(acceptReply, acceptReplyStreamId, 0L, acceptCorrelationId, hs ->
+                writer.doHttpResponse(acceptReply, acceptReplyStreamId, 0L, acceptCorrelationId, hs ->
                 {
                     hs.item(h -> h.representation((byte) 0).name(":status").value("200"));
                     hs.item(h -> h.representation((byte) 0).name("content-type").value("text/event-stream"));
@@ -175,10 +171,10 @@ public class ServerStreamFactory implements StreamFactory
         }
 
         private void afterBegin(
-                int msgTypeId,
-                DirectBuffer buffer,
-                int index,
-                int length)
+            int msgTypeId,
+            DirectBuffer buffer,
+            int index,
+            int length)
         {
             switch (msgTypeId)
             {
@@ -196,10 +192,10 @@ public class ServerStreamFactory implements StreamFactory
         }
 
         private void handleThrottle(
-                int msgTypeId,
-                DirectBuffer buffer,
-                int index,
-                int length)
+            int msgTypeId,
+            DirectBuffer buffer,
+            int index,
+            int length)
         {
             switch (msgTypeId)
             {
@@ -232,9 +228,9 @@ public class ServerStreamFactory implements StreamFactory
     }
 
     RouteFW resolveTarget(
-            long sourceRef,
-            long authorization,
-            String sourceName)
+        long sourceRef,
+        long authorization,
+        String sourceName)
     {
         MessagePredicate filter = (t, b, o, l) ->
         {
@@ -246,10 +242,10 @@ public class ServerStreamFactory implements StreamFactory
     }
 
     private RouteFW wrapRoute(
-            int msgTypeId,
-            DirectBuffer buffer,
-            int index,
-            int length)
+        int msgTypeId,
+        DirectBuffer buffer,
+        int index,
+        int length)
     {
         return routeRO.wrap(buffer, index, index + length);
     }

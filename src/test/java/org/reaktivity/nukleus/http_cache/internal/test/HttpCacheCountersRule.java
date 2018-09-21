@@ -49,63 +49,162 @@ public class HttpCacheCountersRule implements TestRule
         };
     }
 
-    public long slabAquires()
+    public long requests()
     {
-        return controller().count("entry.acquires");
+        return controller().count("requests");
     }
 
-    public long slabReleases()
+    public long requestsCachable()
     {
-        return controller().count("entry.releases");
+        return controller().count("requests.cacheable");
     }
 
-    public long cacheHits()
+    public long requestsPreferWait()
     {
-        return controller().count("cache.hits");
+        return controller().count("requests.prefer.wait");
     }
 
-    public long cacheMisses()
+    public long responses()
     {
-        return controller().count("cache.misses");
+        return controller().count("responses");
     }
+
+    public long responsesCached()
+    {
+        return controller().count("responses.cached");
+    }
+
+    public long responsesAborted()
+    {
+        return controller().count("responses.aborted");
+    }
+
+    public long promises()
+    {
+        return controller().count("promises");
+    }
+
+    public long promisesCanceled()
+    {
+        return controller().count("promises.canceled");
+    }
+
+    public long cacheEntries()
+    {
+        return controller().count("cache.entries");
+    }
+
+    public long refreshRequests()
+    {
+        return controller().count("refresh.request.acquires");
+    }
+
+    public long cachedRequestAcquires()
+    {
+        return controller().count("cached.request.acquires");
+    }
+
+    public long cachedRequestReleases()
+    {
+        return controller().count("cached.request.releases");
+    }
+
+    public long cachedResponseAcquires()
+    {
+        return controller().count("cached.response.acquires");
+    }
+
+    public long cachedResponseReleases()
+    {
+        return controller().count("cached.response.releases");
+    }
+
+    public long cacheSlots()
+    {
+        return cachedRequestAcquires() + cachedResponseAcquires() - cachedRequestReleases() - cachedResponseReleases();
+    }
+
 
     private HttpCacheController controller()
     {
         return reaktor.controller(HttpCacheController.class);
     }
 
-    public void assertCacheHits(
-            int expected)
+    public void assertExpectedCacheEntries(
+        int numberOfResponses)
     {
-        assertEquals(expected, cacheHits());
+        assertEquals(numberOfResponses, cacheEntries());
+        assertEquals(NUM_OF_SLOTS_PER_CACHE_ENTRY * numberOfResponses, cacheSlots());
     }
 
-    public void assertCacheMisses(
-            int expected)
+    public void assertExpectedCacheRefreshes(
+        int cacheInitiatedRefreshes)
     {
-        assertEquals(expected, cacheMisses());
+        assertEquals(cacheInitiatedRefreshes, refreshRequests());
     }
 
     public void assertExpectedCacheEntries(
-            int numberOfResponses)
+        int numberOfResponses,
+        int cacheInitiatedRefreshes)
     {
-        assertEquals(NUM_OF_SLOTS_PER_CACHE_ENTRY * numberOfResponses, slabAquires() - slabReleases());
+        assertExpectedCacheEntries(numberOfResponses);
+        assertExpectedCacheRefreshes(cacheInitiatedRefreshes);
     }
 
     public void assertExpectedCacheEntries(
-            int numberOfResponses,
-            int cacheInitiatedRefreshes)
+        int numberOfResponses,
+        int cacheInitiatedRefreshes,
+        int requestPendingCacheUpdate)
     {
-        assertEquals(NUM_OF_SLOTS_PER_CACHE_ENTRY * numberOfResponses + cacheInitiatedRefreshes, slabAquires() - slabReleases());
+        assertExpectedCacheEntries(numberOfResponses);
+        assertExpectedCacheRefreshes(cacheInitiatedRefreshes);
     }
 
-    public void assertExpectedCacheEntries(
-            int numberOfResponses,
-            int cacheInitiatedRefreshes,
-            int requestPendingCacheUpdate)
+    public void assertRequests(
+        int expected)
     {
-        assertEquals(
-            NUM_OF_SLOTS_PER_CACHE_ENTRY * numberOfResponses + cacheInitiatedRefreshes + requestPendingCacheUpdate,
-            slabAquires() - slabReleases());
+        assertEquals(expected, requests());
+    }
+
+    public void assertRequestsCacheable(
+        int expected)
+    {
+        assertEquals(expected, requestsCachable());
+    }
+
+    public void assertRequestsPreferWait(
+        int expected)
+    {
+        assertEquals(expected, requestsPreferWait());
+    }
+
+    public void assertResponses(
+        int expected)
+    {
+        assertEquals(expected, responses());
+    }
+
+    public void assertResponsesCached(
+        int expected)
+    {
+        assertEquals(expected, responsesCached());
+    }
+
+    public void assertResponsesAborted(
+        int expected)
+    {
+        assertEquals(expected, responsesAborted());
+    }
+
+    public void assertPromises(
+        int expected)
+    {
+        assertEquals(expected, promises());
+    }
+
+    public void assertPromisesCanceled(
+        int expected)
+    {
+        assertEquals(expected, promisesCanceled());
     }
 }

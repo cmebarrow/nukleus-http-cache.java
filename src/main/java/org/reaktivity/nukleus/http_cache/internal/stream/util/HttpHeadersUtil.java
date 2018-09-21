@@ -15,17 +15,38 @@
  */
 package org.reaktivity.nukleus.http_cache.internal.stream.util;
 
+import java.text.SimpleDateFormat;
+import java.time.Instant;
+import java.util.Date;
 import java.util.function.Predicate;
 
 import org.reaktivity.nukleus.http_cache.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
 
+import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeaders.AUTHORITY;
+import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeaders.RETRY_AFTER;
+import static org.reaktivity.nukleus.http_cache.internal.stream.util.HttpHeaders.STATUS;
+
 public final class HttpHeadersUtil
 {
+    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz");
+
     public static final Predicate<? super HttpHeaderFW> HAS_CACHE_CONTROL = h ->
     {
         String name = h.name().asString();
-        return "cache-control".equals(name);
+        return "cache-control".equalsIgnoreCase(name);
+    };
+
+    public static final Predicate<? super HttpHeaderFW> HAS_AUTHORIZATION = h ->
+    {
+        String name = h.name().asString();
+        return AUTHORITY.equalsIgnoreCase(name);
+    };
+
+    public static final Predicate<? super HttpHeaderFW> HAS_RETRY_AFTER = h ->
+    {
+        String name = h.name().asString();
+        return RETRY_AFTER.equalsIgnoreCase(name);
     };
 
     public static String getRequestURL(ListFW<HttpHeaderFW> headers)
@@ -39,7 +60,7 @@ public final class HttpHeadersUtil
         {
             switch (h.name().asString())
             {
-                case HttpHeaders.AUTHORITY:
+                case AUTHORITY:
                     authority.append(h.value().asString());
                     break;
                 case HttpHeaders.PATH:
@@ -61,7 +82,7 @@ public final class HttpHeadersUtil
         final StringBuilder header = new StringBuilder();
         cachedRequestHeadersRO.forEach(h ->
         {
-            if (headerName.equals(h.name().asString()))
+            if (headerName.equalsIgnoreCase(h.name().asString()))
             {
                 header.append(h.value().asString());
             }
@@ -77,5 +98,56 @@ public final class HttpHeadersUtil
     {
         final String result = getHeader(responseHeaders, headerName);
         return result == null ? defaulted : result;
+    }
+
+    public static boolean hasStatusCode(
+        ListFW<HttpHeaderFW> responseHeaders,
+        int statusCode)
+    {
+        return  (responseHeaders.anyMatch(h ->
+                STATUS.equals(h.name().asString()) && (Integer.toString(statusCode)).equals(h.value().asString())));
+    }
+
+    public static boolean retry(
+        ListFW<HttpHeaderFW> responseHeaders)
+    {
+        return hasStatusCode(responseHeaders, 503) && responseHeaders.anyMatch(HAS_RETRY_AFTER);
+    }
+
+    /*
+     * Retry-After supports two formats. For example:
+     * Retry-After: Wed, 21 Oct 2015 07:28:00 GMT
+     * Retry-After: 120
+     *
+     * @return wait time in millis from now for both formats
+     */
+    public static long retryAfter(
+        ListFW<HttpHeaderFW> responseHeaders)
+    {
+        HttpHeaderFW header = responseHeaders.matchFirst(HAS_RETRY_AFTER);
+        assert header != null;
+
+        String retryAfter = header.value().asString();
+        try
+        {
+            if (retryAfter != null && !retryAfter.isEmpty())
+            {
+                if (Character.isDigit(retryAfter.charAt(0)))
+                {
+                    return Integer.valueOf(retryAfter) * 1000;
+                }
+                else
+                {
+                    Date date = DATE_FORMAT.parse(retryAfter);
+                    long wait = date.toInstant().toEpochMilli() - Instant.now().toEpochMilli();
+                    return Math.max(wait, 0);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            // ignore
+        }
+        return 0L;
     }
 }

@@ -131,6 +131,8 @@ public final class CacheUtils
         ListFW<HttpHeaderFW> cachedRequest,
         CacheControl cachedResponse)
     {
+        assert request.buffer() != cachedRequest.buffer();
+
         if (cachedResponse.contains(CacheDirectives.PUBLIC))
         {
             return true;
@@ -159,6 +161,10 @@ public final class CacheUtils
         ListFW<HttpHeaderFW> cachedResponse,
         ListFW<HttpHeaderFW> cachedRequest)
     {
+        assert request != cachedRequest;
+        assert request.buffer() != cachedRequest.buffer();
+        assert request.buffer() != cachedResponse.buffer();
+
         final String cachedVaryHeader = getHeader(cachedResponse, "vary");
         if (cachedVaryHeader == null)
         {
@@ -171,6 +177,19 @@ public final class CacheUtils
             String myHeaderValue = getHeader(cachedRequest, v);
             return !Objects.equals(pendingHeaderValue, myHeaderValue);
         });
+    }
+
+    public static boolean isVaryHeader(
+            String header,
+            ListFW<HttpHeaderFW> cachedResponse)
+    {
+        final String cachedVaryHeader = getHeader(cachedResponse, "vary");
+        if (cachedVaryHeader == null)
+        {
+            return false;
+        }
+
+        return stream(cachedVaryHeader.split("\\s*,\\s*")).anyMatch(h -> h.equalsIgnoreCase(header));
     }
 
     public static boolean isMatchByEtag(

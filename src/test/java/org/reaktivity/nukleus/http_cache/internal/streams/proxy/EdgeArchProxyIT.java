@@ -17,9 +17,11 @@ package org.reaktivity.nukleus.http_cache.internal.streams.proxy;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.junit.rules.RuleChain.outerRule;
+import static org.reaktivity.nukleus.http_cache.internal.HttpCacheConfiguration.HTTP_CACHE_MAXIMUM_REQUESTS;
 
 import java.time.Instant;
 
+import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.DisableOnDebug;
@@ -27,11 +29,9 @@ import org.junit.rules.TestRule;
 import org.junit.rules.Timeout;
 import org.kaazing.k3po.junit.annotation.Specification;
 import org.kaazing.k3po.junit.rules.K3poRule;
-import org.reaktivity.nukleus.http_cache.internal.HttpCacheController;
 import org.reaktivity.nukleus.http_cache.internal.test.HttpCacheCountersRule;
 import org.reaktivity.reaktor.test.ReaktorRule;
-
-import org.junit.Assert;
+import org.reaktivity.reaktor.test.annotation.Configure;
 
 public class EdgeArchProxyIT
 {
@@ -43,18 +43,18 @@ public class EdgeArchProxyIT
 
     private final ReaktorRule reaktor = new ReaktorRule()
             .nukleus("http-cache"::equals)
-            .controller(HttpCacheController.class::isAssignableFrom)
+            .controller("http-cache"::equals)
             .directory("target/nukleus-itests")
             .commandBufferCapacity(1024)
             .responseBufferCapacity(1024)
-            .counterValuesBufferCapacity(1024)
+            .counterValuesBufferCapacity(4096)
             .nukleus("http-cache"::equals)
             .clean();
 
     private final HttpCacheCountersRule counters = new HttpCacheCountersRule(reaktor);
 
     @Rule
-    public final TestRule chain = outerRule(k3po).around(reaktor).around(counters).around(timeout);
+    public final TestRule chain = outerRule(reaktor).around(k3po).around(counters).around(timeout);
 
     @Test
     @Specification({
@@ -126,7 +126,7 @@ public class EdgeArchProxyIT
     public void shouldInjectIndividualizedPushPromisesOnSharedFreshnessExtension() throws Exception
     {
         k3po.finish();
-        counters.assertExpectedCacheEntries(1, 1, 1);
+        counters.assertExpectedCacheEntries(1, 1, 0);
     }
 
     @Test
@@ -185,6 +185,23 @@ public class EdgeArchProxyIT
     @Test
     @Specification({
         "${route}/proxy/controller",
+        "${streams}/polling.updates.cache.after.503.retry-after/accept/client",
+        "${streams}/polling.updates.cache.after.503.retry-after/connect/server",
+    })
+    public void shouldUpdateCacheOnPollAfter503RetryAfter() throws Exception
+    {
+        k3po.start();
+        k3po.awaitBarrier("CACHE_UPDATE_SENT");
+        Thread.sleep(10);
+        k3po.notifyBarrier("CACHE_UPDATE_RECEIVED");
+        k3po.finish();
+        Thread.sleep(1000);
+        counters.assertExpectedCacheEntries(1);
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
         "${streams}/polling.waits.on.surrogate-age/accept/client",
         "${streams}/polling.waits.on.surrogate-age/connect/server",
     })
@@ -198,7 +215,7 @@ public class EdgeArchProxyIT
         k3po.finish();
         Instant finish = Instant.now();
         Assert.assertTrue(start.plusMillis(4900).isBefore(finish));
-        counters.assertExpectedCacheEntries(1, 1);
+        counters.assertExpectedCacheEntries(1, 2);
     }
 
     @Test
@@ -210,7 +227,7 @@ public class EdgeArchProxyIT
     public void shouldUpdateOnUpdateRequestsWhenPollCompletes() throws Exception
     {
         k3po.finish();
-        counters.assertExpectedCacheEntries(1, 1);
+        counters.assertExpectedCacheEntries(1, 2);
     }
 
     @Test
@@ -222,7 +239,7 @@ public class EdgeArchProxyIT
     public void shouldAttachToNextCacheEntryIfPushPromiseArrivesBeforeResponseCompletes() throws Exception
     {
         k3po.finish();
-        counters.assertExpectedCacheEntries(1, 1);
+        counters.assertExpectedCacheEntries(1, 2);
     }
 
     @Test
@@ -320,6 +337,94 @@ public class EdgeArchProxyIT
     public void shouldMaintainPollingForMultipleAuthScopes() throws Exception
     {
         k3po.finish();
-        counters.assertExpectedCacheEntries(2, 0, 2);
+        counters.assertExpectedCacheEntries(2, 2, 2);
+    }
+
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/no.authorization.sends.cache.control.private/accept/client",
+        "${streams}/no.authorization.sends.cache.control.private/connect/server",
+    })
+    public void noAuthorizationSendsCacheControlPrivate() throws Exception
+    {
+        k3po.finish();
+        counters.assertExpectedCacheEntries(1, 2, 0);
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/no.authorization.sends.cache.control.private.except.when.public/accept/client",
+        "${streams}/no.authorization.sends.cache.control.private.except.when.public/connect/server",
+    })
+    public void noAuthorizationSendsCacheControlPrivateExceptWhenPublic() throws Exception
+    {
+        k3po.finish();
+        counters.assertExpectedCacheEntries(1, 2, 0);
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/polling.vary.header.mismatch/accept/client",
+        "${streams}/polling.vary.header.mismatch/connect/server",
+    })
+    public void pollingVaryHeaderMismatch() throws Exception
+    {
+        k3po.finish();
+        counters.assertExpectedCacheEntries(1, 2, 0);
+    }
+
+    @Test
+    @Specification({
+            "${route}/proxy/controller",
+            "${streams}/polling.vary.header.asterisk/accept/client",
+            "${streams}/polling.vary.header.asterisk/connect/server",
+    })
+    public void pollingVaryHeaderAsterisk() throws Exception
+    {
+        k3po.finish();
+        counters.assertExpectedCacheEntries(1, 2, 0);
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/polling.vary.header.value.mismatch/accept/client",
+        "${streams}/polling.vary.header.value.mismatch/connect/server",
+    })
+    public void pollingVaryHeaderValueMismatch() throws Exception
+    {
+        k3po.finish();
+        Thread.sleep(100); // Wait for response to be processed
+        counters.assertExpectedCacheEntries(1, 1, 0);
+    }
+
+    // First response gets proxied (but doesn't get stored in cache
+    // as there is no buffer slot for headers)
+    // Second request gets 503 + retry-after
+    @Test
+    @Configure(name=HTTP_CACHE_MAXIMUM_REQUESTS, value="1")       // 1 buffer slot
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/cache.sends.503.retry-after/accept/client",
+        "${streams}/cache.sends.503.retry-after/connect/server",
+    })
+    public void sends503RetryAfterForSecondRequest() throws Exception
+    {
+        k3po.finish();
+    }
+
+    @Test
+    @Specification({
+        "${route}/proxy/controller",
+        "${streams}/cache.sends.304.for.matching.etag/accept/client",
+        "${streams}/cache.sends.304.for.matching.etag/connect/server",
+    })
+    public void sends304ForMatchingEtagRequest() throws Exception
+    {
+        k3po.finish();
     }
 }

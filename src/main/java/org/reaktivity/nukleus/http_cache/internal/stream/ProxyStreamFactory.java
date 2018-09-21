@@ -17,6 +17,7 @@ package org.reaktivity.nukleus.http_cache.internal.stream;
 
 import static java.util.Objects.requireNonNull;
 
+import java.util.Random;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -26,92 +27,85 @@ import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.function.MessagePredicate;
+import org.reaktivity.nukleus.http_cache.internal.HttpCacheCounters;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.Cache;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.CacheControl;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.Request;
+import org.reaktivity.nukleus.http_cache.internal.stream.util.CountingBufferPool;
 import org.reaktivity.nukleus.http_cache.internal.stream.util.LongObjectBiConsumer;
 import org.reaktivity.nukleus.http_cache.internal.stream.util.Writer;
 import org.reaktivity.nukleus.http_cache.internal.types.HttpHeaderFW;
 import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
-import org.reaktivity.nukleus.http_cache.internal.types.OctetsFW;
 import org.reaktivity.nukleus.http_cache.internal.types.control.RouteFW;
-import org.reaktivity.nukleus.http_cache.internal.types.stream.AbortFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.BeginFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.DataFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.EndFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.HttpBeginExFW;
-import org.reaktivity.nukleus.http_cache.internal.types.stream.ResetFW;
 import org.reaktivity.nukleus.http_cache.internal.types.stream.WindowFW;
 import org.reaktivity.nukleus.route.RouteManager;
 import org.reaktivity.nukleus.stream.StreamFactory;
 
 public class ProxyStreamFactory implements StreamFactory
 {
-
-    static final String STALE_WHILE_REVALIDATE_2147483648 = "stale-while-revalidate=2147483648";
-
-    // TODO, remove need for RW in simplification of inject headers
-    final HttpBeginExFW.Builder httpBeginExRW = new HttpBeginExFW.Builder();
-
     final BeginFW beginRO = new BeginFW();
     final HttpBeginExFW httpBeginExRO = new HttpBeginExFW();
     final ListFW<HttpHeaderFW> requestHeadersRO = new HttpBeginExFW().headers();
-    final ListFW<HttpHeaderFW> pendingRequestHeadersRO = new HttpBeginExFW().headers();
     final DataFW dataRO = new DataFW();
-    final OctetsFW octetsRO = new OctetsFW();
     final EndFW endRO = new EndFW();
     private final RouteFW routeRO = new RouteFW();
 
     final WindowFW windowRO = new WindowFW();
-    final ResetFW resetRO = new ResetFW();
-    final AbortFW abortRO = new AbortFW();
 
     final RouteManager router;
+    final BudgetManager budgetManager;
 
     final LongSupplier supplyStreamId;
-    final BufferPool streamBufferPool;
     final BufferPool requestBufferPool;
     final BufferPool responseBufferPool;
-    final BufferPool cacheBufferPool;
     final Long2ObjectHashMap<Request> correlations;
-    final LongSupplier supplyCorrelationId;
     final LongObjectBiConsumer<Runnable> scheduler;
+    final LongSupplier supplyCorrelationId;
     final Supplier<String> supplyEtag;
 
     final Writer writer;
     final CacheControl cacheControlParser = new CacheControl();
     final Cache cache;
-    final LongSupplier cacheHits;
-    final LongSupplier cacheMisses;
+    final Random random;
+    final HttpCacheCounters counters;
 
     public ProxyStreamFactory(
         RouteManager router,
+        BudgetManager budgetManager,
         MutableDirectBuffer writeBuffer,
-        BufferPool bufferPool,
+        BufferPool requestBufferPool,
         LongSupplier supplyStreamId,
         LongSupplier supplyCorrelationId,
         Long2ObjectHashMap<Request> correlations,
         LongObjectBiConsumer<Runnable> scheduler,
         Cache cache,
         Supplier<String> supplyEtag,
-        LongSupplier cacheHits,
-        LongSupplier cacheMisses)
+        HttpCacheCounters counters)
     {
         this.supplyEtag = supplyEtag;
         this.router = requireNonNull(router);
+        this.budgetManager = requireNonNull(budgetManager);
         this.supplyStreamId = requireNonNull(supplyStreamId);
-        this.streamBufferPool = requireNonNull(bufferPool);
-        this.requestBufferPool = bufferPool.duplicate();
-        this.responseBufferPool = bufferPool.duplicate();
-        this.cacheBufferPool = bufferPool.duplicate();
+        this.requestBufferPool = new CountingBufferPool(
+                requestBufferPool,
+                counters.supplyCounter.apply("initial.request.acquires"),
+                counters.supplyCounter.apply("initial.request.releases"));
+        this.responseBufferPool = new CountingBufferPool(
+                requestBufferPool,
+                counters.supplyCounter.apply("response.acquires"),
+                counters.supplyCounter.apply("response.releases"));
         this.correlations = requireNonNull(correlations);
+        this.scheduler = scheduler;
         this.supplyCorrelationId = requireNonNull(supplyCorrelationId);
-        this.scheduler = requireNonNull(scheduler);
         this.cache = cache;
-        this.cacheHits = cacheHits;
-        this.cacheMisses = cacheMisses;
 
-        this.writer = new Writer(writeBuffer, bufferPool.duplicate());
+        this.writer = new Writer(writeBuffer);
+        this.random = new Random();
+        this.counters = counters;
     }
 
     @Override

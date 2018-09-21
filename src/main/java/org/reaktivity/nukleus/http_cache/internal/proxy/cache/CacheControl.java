@@ -17,6 +17,7 @@ package org.reaktivity.nukleus.http_cache.internal.proxy.cache;
 
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -32,7 +33,7 @@ public class CacheControl
 
     private static final Pattern CACHE_DIRECTIVES = Pattern.compile(REGEX);
 
-    private HashMap<String, String> values = new HashMap<>();
+    private final HashMap<String, String> values = new LinkedHashMap<>();
 
     public CacheControl()
     {

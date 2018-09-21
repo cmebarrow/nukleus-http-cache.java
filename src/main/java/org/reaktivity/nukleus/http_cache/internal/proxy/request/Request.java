@@ -15,7 +15,6 @@
  */
 package org.reaktivity.nukleus.http_cache.internal.proxy.request;
 
-import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.route.RouteManager;
 
@@ -23,7 +22,7 @@ public abstract class Request
 {
     public enum Type
     {
-        ON_UPDATE, PROXY, INITIAL_REQUEST, CACHE_REFRESH
+        PREFER_WAIT, PROXY, INITIAL_REQUEST, CACHE_REFRESH
     }
 
     final String acceptName;
@@ -73,6 +72,6 @@ public abstract class Request
         this.router.setThrottle(acceptName, acceptReplyStreamId, throttle);
     }
 
-    public abstract void purge(BufferPool bufferPool);
+    public abstract void purge();
 
 }

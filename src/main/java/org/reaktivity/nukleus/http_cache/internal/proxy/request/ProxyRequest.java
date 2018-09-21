@@ -15,13 +15,11 @@
  */
 package org.reaktivity.nukleus.http_cache.internal.proxy.request;
 
-import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
 import org.reaktivity.nukleus.route.RouteManager;
 
 public class ProxyRequest extends Request
 {
-
     public ProxyRequest(
         String acceptName,
         MessageConsumer acceptReply,
@@ -39,9 +37,8 @@ public class ProxyRequest extends Request
     }
 
     @Override
-    public void purge(BufferPool bufferPool)
+    public void purge()
     {
         // NOOP, can't purge non cache-able request, TODO clean up interfaces?
     }
-
 }

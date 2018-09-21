@@ -17,5 +17,6 @@ package org.reaktivity.nukleus.http_cache.internal.proxy.cache;
 
 public final class HttpStatus
 {
+    public static final String OK_200 = "200";
     public static final String NOT_MODIFIED_304 = "304";
 }

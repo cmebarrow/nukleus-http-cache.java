@@ -24,11 +24,12 @@ import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
 public class CacheRefreshRequest extends CacheableRequest
 {
 
-    private CacheEntry updatingEntry;
-    private Cache cache;
+    private final CacheEntry updatingEntry;
+    private final Cache cache;
 
     public CacheRefreshRequest(
             CacheableRequest req,
+            BufferPool bufferPool,
             int requestSlot,
             String etag,
             CacheEntry cacheEntry,
@@ -44,8 +45,11 @@ public class CacheRefreshRequest extends CacheableRequest
               req.supplyCorrelationId,
               req.supplyStreamId,
               req.requestURLHash(),
+              bufferPool,
               requestSlot,
               req.router,
+              req.authorizationHeader(),
+              req.authorization(),
               req.authScope(),
               etag);
         this.updatingEntry = cacheEntry;
@@ -53,7 +57,7 @@ public class CacheRefreshRequest extends CacheableRequest
     }
 
     @Override
-    public boolean cache(
+    public boolean storeResponseHeaders(
         ListFW<HttpHeaderFW> responseHeaders,
         Cache cache,
         BufferPool bufferPool)
@@ -62,10 +66,10 @@ public class CacheRefreshRequest extends CacheableRequest
             ":status".equals(h.name().asString()) &&
             h.value().asString().startsWith("2")))
         {
-            boolean noError = super.cache(responseHeaders, cache, bufferPool);
+            boolean noError = super.storeResponseHeaders(responseHeaders, cache, bufferPool);
             if (!noError)
             {
-                this.purge(bufferPool);
+                this.purge();
             }
             return noError;
         }
@@ -75,12 +79,12 @@ public class CacheRefreshRequest extends CacheableRequest
         {
             updatingEntry.refresh(this);
             this.state = CacheState.COMMITTED;
-            this.purge(bufferPool);
+            this.purge();
             return true;
         }
         else
         {
-            this.purge(bufferPool);
+            this.purge();
             return false;
         }
 }
@@ -92,13 +96,13 @@ public class CacheRefreshRequest extends CacheableRequest
     }
 
     @Override
-    public void purge(BufferPool cacheBufferPool)
+    public void purge()
     {
         if (this.state != CacheState.COMMITTED)
         {
             this.cache.purge(updatingEntry);
         }
-        super.purge(cacheBufferPool);
+        super.purge();
     }
 
 }

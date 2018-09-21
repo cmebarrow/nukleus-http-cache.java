@@ -42,13 +42,13 @@ public class ProxyExceptionsWithConfigurationIT
             .directory("target/nukleus-itests")
             .commandBufferCapacity(1024)
             .responseBufferCapacity(1024)
-            .counterValuesBufferCapacity(1024)
+            .counterValuesBufferCapacity(4096)
             .nukleus("http-cache"::equals)
             .configure(BUFFER_SLOT_CAPACITY_PROPERTY, 0)
             .clean();
 
     @Rule
-    public final TestRule chain = outerRule(k3po).around(reaktor).around(timeout);
+    public final TestRule chain = outerRule(reaktor).around(k3po).around(timeout);
 
     @Ignore("ABORT vs RESET read order not yet guaranteed to match write order")
     @Test

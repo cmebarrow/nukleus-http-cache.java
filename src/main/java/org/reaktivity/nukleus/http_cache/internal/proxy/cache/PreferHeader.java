@@ -26,14 +26,14 @@ import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
 
 public final class PreferHeader
 {
-
-    public static boolean preferResponseWhenModified(ListFW<HttpHeaderFW> headers)
+    public static boolean isPreferIfNoneMatch(
+        ListFW<HttpHeaderFW> headers)
     {
         return HttpHeadersUtil.getHeader(headers, IF_NONE_MATCH) != null &&
-               headers.anyMatch(HAS_HEADER);
+               headers.anyMatch(PREFER_HEADER_NAME);
     }
 
-    public static final Predicate<? super HttpHeaderFW> HAS_HEADER = h ->
+    public static final Predicate<? super HttpHeaderFW> PREFER_HEADER_NAME = h ->
     {
         final String name = h.name().asString();
         return PREFER.equals(name);

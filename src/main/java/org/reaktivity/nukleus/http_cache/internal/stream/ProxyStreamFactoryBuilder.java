@@ -18,6 +18,7 @@ package org.reaktivity.nukleus.http_cache.internal.stream;
 import java.util.Random;
 import java.util.function.Function;
 import java.util.function.IntUnaryOperator;
+import java.util.function.LongConsumer;
 import java.util.function.LongFunction;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -26,8 +27,10 @@ import org.agrona.MutableDirectBuffer;
 import org.agrona.collections.Long2ObjectHashMap;
 import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.http_cache.internal.HttpCacheConfiguration;
+import org.reaktivity.nukleus.http_cache.internal.HttpCacheCounters;
 import org.reaktivity.nukleus.http_cache.internal.proxy.cache.Cache;
 import org.reaktivity.nukleus.http_cache.internal.proxy.request.Request;
+import org.reaktivity.nukleus.http_cache.internal.stream.util.HeapBufferPool;
 import org.reaktivity.nukleus.http_cache.internal.stream.util.LongObjectBiConsumer;
 import org.reaktivity.nukleus.http_cache.internal.stream.util.Slab;
 import org.reaktivity.nukleus.route.RouteManager;
@@ -45,19 +48,16 @@ public class ProxyStreamFactoryBuilder implements StreamFactoryBuilder
     private MutableDirectBuffer writeBuffer;
     private LongSupplier supplyStreamId;
     private LongSupplier supplyCorrelationId;
-    private Slab bufferPool;
+    private Slab cacheBufferPool;
+    private HeapBufferPool requestBufferPool;
     private Cache cache;
+    private BudgetManager budgetManager;
+    private Function<String, LongSupplier> supplyCounter;
+    private Function<String, LongConsumer> supplyAccumulator;
 
     private int etagCnt = 0;
     private final int etagPrefix = new Random().nextInt(99999);
-    final Supplier<String> supplyEtag = () ->
-    {
-        return "\"" + etagPrefix + "a" + etagCnt++ + "\"";
-    };
-    private LongSupplier entryAcquires;
-    private LongSupplier entryReleases;
-    private LongSupplier cacheHits;
-    private LongSupplier cacheMisses;
+    private final Supplier<String> supplyEtag = () -> "\"" + etagPrefix + "a" + etagCnt++ + "\"";
 
     public ProxyStreamFactoryBuilder(
             HttpCacheConfiguration config,
@@ -107,7 +107,7 @@ public class ProxyStreamFactoryBuilder implements StreamFactoryBuilder
     }
 
     @Override
-    public ProxyStreamFactoryBuilder setCorrelationIdSupplier(
+    public ProxyStreamFactoryBuilder setTargetCorrelationIdSupplier(
         LongSupplier supplyCorrelationId)
     {
         this.supplyCorrelationId = supplyCorrelationId;
@@ -125,40 +125,55 @@ public class ProxyStreamFactoryBuilder implements StreamFactoryBuilder
     public StreamFactoryBuilder setCounterSupplier(
         Function<String, LongSupplier> supplyCounter)
     {
-        entryAcquires = supplyCounter.apply("entry.acquires");
-        entryReleases = supplyCounter.apply("entry.releases");
-        cacheHits = supplyCounter.apply("cache.hits");
-        cacheMisses = supplyCounter.apply("cache.misses");
+        this.supplyCounter = supplyCounter;
+        return this;
+    }
+
+    @Override
+    public StreamFactoryBuilder setAccumulatorSupplier(
+            Function<String, LongConsumer> supplyAccumulator)
+    {
+        this.supplyAccumulator = supplyAccumulator;
         return this;
     }
 
     @Override
     public StreamFactory build()
     {
+        final HttpCacheCounters counters = new HttpCacheCounters(supplyCounter, supplyAccumulator);
+
         if (cache == null)
         {
-            final int httpCacheCapacity = config.httpCacheCapacity();
-            final int httpCacheSlotCapacity = config.httpCacheSlotCapacity();
-            this.bufferPool = new Slab(httpCacheCapacity, httpCacheSlotCapacity, entryAcquires, entryReleases);
+            budgetManager = new BudgetManager();
+            final int httpCacheCapacity = config.cacheCapacity();
+            final int httpCacheSlotCapacity = config.cacheSlotCapacity();
+            this.cacheBufferPool = new Slab(httpCacheCapacity, httpCacheSlotCapacity);
+            this.requestBufferPool = new HeapBufferPool(config.maximumRequests(), httpCacheSlotCapacity);
 
+            LongConsumer cacheEntries = supplyAccumulator.apply("cache.entries");
             this.cache = new Cache(
                     scheduler,
+                    budgetManager,
                     writeBuffer,
-                    bufferPool,
+                    requestBufferPool,
+                    cacheBufferPool,
                     correlations,
-                    supplyEtag);
+                    supplyEtag,
+                    counters,
+                    cacheEntries);
         }
+
         return new ProxyStreamFactory(
                 router,
+                budgetManager,
                 writeBuffer,
-                bufferPool,
+                requestBufferPool,
                 supplyStreamId,
                 supplyCorrelationId,
                 correlations,
                 scheduler,
                 cache,
                 supplyEtag,
-                cacheHits,
-                cacheMisses);
+                counters);
     }
 }

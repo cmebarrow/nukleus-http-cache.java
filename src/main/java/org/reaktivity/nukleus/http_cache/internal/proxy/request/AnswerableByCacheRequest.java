@@ -15,20 +15,15 @@
  */
 package org.reaktivity.nukleus.http_cache.internal.proxy.request;
 
-import org.agrona.MutableDirectBuffer;
-import org.reaktivity.nukleus.buffer.BufferPool;
 import org.reaktivity.nukleus.function.MessageConsumer;
-import org.reaktivity.nukleus.http_cache.internal.stream.util.Slab;
-import org.reaktivity.nukleus.http_cache.internal.types.HttpHeaderFW;
-import org.reaktivity.nukleus.http_cache.internal.types.ListFW;
 import org.reaktivity.nukleus.route.RouteManager;
 
 public abstract class AnswerableByCacheRequest extends Request
 {
-
-    private int requestSlot;
     private final int requestURLHash;
+    private final long authorization;
     private final short authScope;
+    private final boolean authorizationHeader;
     private String etag;
 
     public AnswerableByCacheRequest(
@@ -37,24 +32,28 @@ public abstract class AnswerableByCacheRequest extends Request
             long acceptReplyStreamId,
             long acceptCorrelationId,
             RouteManager router,
-            int requestSlot,
             int requestURLHash,
+            boolean authorizationHeader,
+            long authorization,
             short authScope,
             String etag)
     {
         super(acceptName, acceptReply, acceptReplyStreamId, acceptCorrelationId, router);
-        this.requestSlot = requestSlot;
         this.requestURLHash = requestURLHash;
+        this.authorizationHeader = authorizationHeader;
+        this.authorization = authorization;
         this.authScope = authScope;
         this.etag = etag;
     }
 
-    public final ListFW<HttpHeaderFW> getRequestHeaders(
-            ListFW<HttpHeaderFW> requestHeadersRO,
-            BufferPool pool)
+    public final boolean authorizationHeader()
     {
-        final MutableDirectBuffer buffer = pool.buffer(requestSlot);
-        return requestHeadersRO.wrap(buffer, 0, buffer.capacity());
+        return authorizationHeader;
+    }
+
+    public final long authorization()
+    {
+        return authorization;
     }
 
     public final short authScope()
@@ -70,20 +69,6 @@ public abstract class AnswerableByCacheRequest extends Request
     public final int requestURLHash()
     {
         return requestURLHash;
-    }
-
-    public final int requestSlot()
-    {
-        return requestSlot;
-    }
-
-    public void purge(BufferPool bufferPool)
-    {
-        if (requestSlot != Slab.NO_SLOT)
-        {
-            bufferPool.release(requestSlot);
-            this.requestSlot = Slab.NO_SLOT;
-        }
     }
 
     protected void etag(String etag)

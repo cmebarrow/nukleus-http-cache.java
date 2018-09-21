@@ -22,8 +22,11 @@ public class HttpCacheConfiguration extends Configuration
     public static final String HTTP_CACHE_CAPACITY = "nukleus.http_cache.capacity";
     public static final String HTTP_CACHE_SLOT_CAPACITY = "nukleus.http_cache.slot.capacity";
 
+    public static final String HTTP_CACHE_MAXIMUM_REQUESTS = "nukleus.http_cache.maximum.requests";
+
     private static final int HTTP_CACHE_CAPACITY_DEFAULT = 65536 * 64;
     private static final int HTTP_CACHE_SLOT_CAPACITY_DEFAULT = 0x4000; // ALSO is max header size
+    private static final int HTTP_CACHE_MAXIMUM_REQUESTS_DEFAULT = 65536;
 
     public HttpCacheConfiguration(
         Configuration config)
@@ -31,14 +34,19 @@ public class HttpCacheConfiguration extends Configuration
         super(config);
     }
 
-    public int httpCacheCapacity()
+    public int cacheCapacity()
     {
         return getInteger(HTTP_CACHE_CAPACITY, HTTP_CACHE_CAPACITY_DEFAULT);
     }
 
-    public int httpCacheSlotCapacity()
+    public int cacheSlotCapacity()
     {
         return getInteger(HTTP_CACHE_SLOT_CAPACITY, HTTP_CACHE_SLOT_CAPACITY_DEFAULT);
+    }
+
+    public int maximumRequests()
+    {
+        return getInteger(HTTP_CACHE_MAXIMUM_REQUESTS, HTTP_CACHE_MAXIMUM_REQUESTS_DEFAULT);
     }
 
 }
